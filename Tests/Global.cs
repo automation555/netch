@@ -10,7 +10,7 @@ namespace Tests
         public void Test()
         {
             
-            int i=4;
+            const int i=4;
             int y;
             
             iny y=i/0;
