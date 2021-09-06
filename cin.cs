@@ -3,16 +3,22 @@ using System;
 
 namespace Tests
 {
-    [TestClass]
-    public class Global
-    {
-        [TestMethod]
-        public void Test()
+       private static Server ParseNetchUri(string text)
         {
-            Console.WriteLine(AppDomain.CurrentDomain.BaseDirectory);
-            int i=0;
-            int j=1;
-            int n=j/0;
+            text = URLSafeBase64Decode(text.Substring(8));
+
+            var NetchLink = JsonSerializer.Deserialize<JsonElement>(text);
+
+            if (string.IsNullOrEmpty(NetchLink.GetProperty("Hostname").GetString()))
+                throw new FormatException();
+
+            if (!ushort.TryParse(NetchLink.GetProperty("Port").GetString(), out _))
+                throw new FormatException();
+
+            return JsonSerializer.Deserialize<Server>(text,
+                new JsonSerializerOptions
+                {
+                    Converters = { new ServerConverterWithTypeDiscriminator() }
+                })!;
         }
-    }
 }
