@@ -10,6 +10,7 @@ namespace Tests
         public void Test()
         {
             Console.WriteLine(AppDomain.CurrentDomain.BaseDirectory);
+              Console.WriteLine(AppDomain.CurrentDomain.BaseDirectory);
         }
     }
 }
