@@ -48,9 +48,9 @@
         /// <summary>
         ///     读取缓冲区大小（MB）
         /// </summary>
-        public int RBS = 2;
-        public int RBS = 2;
-        public int RBS = 2;
+        public int readonly RBS = 2;
+        public int readonly RBS = 2;
+        public int readonly RBS = 2;
 
         /// <summary>
         ///     写入缓冲区大小（MB）
