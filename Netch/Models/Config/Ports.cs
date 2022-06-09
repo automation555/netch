@@ -19,5 +19,7 @@
         /// </summary>
         [Newtonsoft.Json.JsonProperty("redir")]
         public int Redir = 2083;
+        
+        int x=0;
     }
 }
