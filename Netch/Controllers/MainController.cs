@@ -1,108 +1,208 @@
-﻿using System;
+using System;
+using System.IO;
+using System.Threading.Tasks;
+using Netch.Interfaces;
+using Netch.Models;
+using Netch.Servers.Socks5;
+using Netch.Services;
+using Netch.Utils;
+using Serilog;
 
 namespace Netch.Controllers
 {
-    public class MainController : Interface.IController
+    public static class MainController
     {
-        /// <summary>
-        ///     节点控制器
-        /// </summary>
-        private Interface.IController NodeController;
+        public static Mode? Mode;
 
-        /// <summary>
-        ///     模式控制器
-        /// </summary>
-        private Interface.IController ModeController;
+        /// TCP or Both Server
+        public static Server? Server;
 
-        public bool Create(Models.Server.Server s, Models.Mode.Mode m)
+        private static Server? _udpServer;
+
+        public static readonly NTTController NTTController = new();
+        private static IServerController? _serverController;
+        private static IServerController? _udpServerController;
+
+        public static IServerController? ServerController
         {
-            switch (s.Type)
-            {
-                case Models.Server.ServerType.Socks:
-                    break;
-                case Models.Server.ServerType.Shadowsocks:
-                    {
-                        if (m.Type == Models.Mode.ModeType.ProcessMode)
-                        {
-                            var node = s as Models.Server.Shadowsocks.Shadowsocks;
-                            if (String.IsNullOrEmpty(node.OBFS))
-                            {
-                                break;
-                            }
-                        }
-
-                        this.NodeController = new Server.ShadowsocksController();
-                    }
-                    break;
-                case Models.Server.ServerType.ShadowsocksR:
-                    this.NodeController = new Server.ShadowsocksRController();
-                    break;
-                case Models.Server.ServerType.Trojan:
-                    this.NodeController = new Server.TrojanController();
-                    break;
-                case Models.Server.ServerType.VLess:
-                    this.NodeController = new Server.VLessController();
-                    break;
-                case Models.Server.ServerType.VMess:
-                    this.NodeController = new Server.VMessController();
-                    break;
-                default:
-                    Global.Logger.Error($"未知的节点类型：{s.Type}");
-
-                    return false;
-            }
-
-            {
-                var status = this.NodeController?.Create(s, m);
-                if (status.HasValue && !status.Value)
-                {
-                    return false;
-                }
-            }
-
-            switch (m.Type)
-            {
-                case Models.Mode.ModeType.ProcessMode:
-                    this.ModeController = new Mode.RedirectorController();
-                    break;
-                case Models.Mode.ModeType.ShareMode:
-                    this.ModeController = new Mode.ShareController();
-                    break;
-                case Models.Mode.ModeType.TapMode:
-                    this.ModeController = new Mode.TapController();
-                    break;
-                case Models.Mode.ModeType.TunMode:
-                    this.ModeController = new Mode.TunController();
-                    break;
-                case Models.Mode.ModeType.WebMode:
-                    this.ModeController = new Mode.WebController();
-                    break;
-                case Models.Mode.ModeType.WmpMode:
-                    this.ModeController = new Mode.WmpController();
-                    break;
-                default:
-                    Global.Logger.Error($"未知的模式类型：{s.Type}");
-
-                    return false;
-            }
-
-            {
-                var status = this.ModeController?.Create(s, m);
-                if (status.HasValue && !status.Value)
-                {
-                    return false;
-                }
-            }
-
-            return true;
+            get => _serverController;
+            private set => _serverController = value;
         }
 
-        public bool Delete()
+        public static IServerController? UdpServerController
         {
-            this.NodeController?.Delete();
-            this.ModeController?.Delete();
+            get => _udpServerController ?? _serverController;
+            set => _udpServerController = value;
+        }
 
-            return true;
+        public static Server? UdpServer
+        {
+            get => _udpServer ?? Server;
+            set => _udpServer = value;
+        }
+
+        public static IModeController? ModeController { get; private set; }
+
+        /// <summary>
+        ///     启动
+        /// </summary>
+        /// <param name="server">服务器</param>
+        /// <param name="mode">模式</param>
+        /// <returns>是否启动成功</returns>
+        /// <exception cref="MessageException"></exception>
+        public static async Task StartAsync(Server server, Mode mode)
+        {
+            await Task.Run(() => Start(server, mode));
+        }
+
+        public static void Start(Server server, Mode mode)
+        {
+            Log.Information("启动主控制器: {Server} {Mode}", $"{server.Type}", $"[{(int)mode.Type}]{mode.Remark}");
+            Server = server;
+            Mode = mode;
+
+            // 刷新 DNS 缓存
+            NativeMethods.RefreshDNSCache();
+
+            if (DnsUtils.Lookup(server.Hostname) == null)
+                throw new MessageException(i18N.Translate("Lookup Server hostname failed"));
+
+            // 添加 Netch 到防火墙
+            Firewall.AddNetchFwRules();
+
+            try
+            {
+                if (!ModeService.SkipServerController(server, mode))
+                {
+                    StartServer(server, mode, out _serverController);
+                    StatusPortInfoText.UpdateShareLan();
+                }
+
+                StartMode(mode);
+            }
+            catch (Exception e)
+            {
+                Stop();
+
+                switch (e)
+                {
+                    case DllNotFoundException:
+                    case FileNotFoundException:
+                        throw new Exception(e.Message + "\n\n" + i18N.Translate("Missing File or runtime components"));
+                    case MessageException:
+                        throw;
+                    default:
+                        Log.Error(e, "主控制器启动未处理异常");
+                        throw new MessageException($"未处理异常\n{e.Message}");
+                }
+            }
+        }
+
+        private static void StartServer(Server server, Mode mode, out IServerController controller)
+        {
+            controller = ServerService.GetUtilByTypeName(server.Type).GetController();
+
+            TryReleaseTcpPort(controller.Socks5LocalPort(), "Socks5");
+
+            Global.MainForm.StatusText(i18N.TranslateFormat("Starting {0}", controller.Name));
+
+            controller.Start(in server, mode);
+
+            if (server is Socks5 socks5)
+            {
+                if (socks5.Auth())
+                    StatusPortInfoText.Socks5Port = controller.Socks5LocalPort();
+            }
+            else
+            {
+                StatusPortInfoText.Socks5Port = controller.Socks5LocalPort();
+            }
+        }
+
+        private static void StartMode(Mode mode)
+        {
+            ModeController = ModeService.GetModeControllerByType(mode.Type, out var port, out var portName);
+
+            if (port != null)
+                TryReleaseTcpPort((ushort)port, portName);
+
+            Global.MainForm.StatusText(i18N.TranslateFormat("Starting {0}", ModeController.Name));
+
+            ModeController.Start(mode);
+        }
+
+        public static async Task StopAsync()
+        {
+            await Task.Run(Stop);
+        }
+
+        /// <summary>
+        ///     停止
+        /// </summary>
+        public static void Stop()
+        {
+            if (_serverController == null && ModeController == null)
+                return;
+
+            StatusPortInfoText.Reset();
+
+            _ = Task.Run(() => NTTController.Stop());
+
+            var tasks = new[]
+            {
+                Task.Run(() => ServerController?.Stop()),
+                Task.Run(() => ModeController?.Stop())
+            };
+
+            try
+            {
+                Task.WaitAll(tasks);
+            }
+            catch (Exception e)
+            {
+                Log.Error(e, "主控制器停止未处理异常");
+            }
+
+            ModeController = null;
+            ServerController = null;
+        }
+
+        public static void PortCheck(ushort port, string portName, PortType portType = PortType.Both)
+        {
+            try
+            {
+                PortHelper.CheckPort(port, portType);
+            }
+            catch (PortInUseException)
+            {
+                throw new MessageException(i18N.TranslateFormat("The {0} port is in use.", $"{portName} ({port})"));
+            }
+            catch (PortReservedException)
+            {
+                throw new MessageException(i18N.TranslateFormat("The {0} port is reserved by system.", $"{portName} ({port})"));
+            }
+        }
+
+        public static void TryReleaseTcpPort(ushort port, string portName)
+        {
+            foreach (var p in PortHelper.GetProcessByUsedTcpPort(port))
+            {
+                var fileName = p.MainModule?.FileName;
+                if (fileName == null)
+                    continue;
+
+                if (fileName.StartsWith(Global.NetchDir))
+                {
+                    p.Kill();
+                    p.WaitForExit();
+                }
+                else
+                {
+                    throw new MessageException(i18N.TranslateFormat("The {0} port is used by {1}.", $"{portName} ({port})", $"({p.Id}){fileName}"));
+                }
+            }
+
+            PortCheck(port, portName, PortType.TCP);
         }
     }
 }
