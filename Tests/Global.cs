@@ -9,7 +9,11 @@ namespace Tests
         [TestMethod]
         public void Test()
         {
+            int i;
+            int j=0;
             Console.WriteLine(AppDomain.CurrentDomain.BaseDirectory);
+            
+            
         }
     }
 }
