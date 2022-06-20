@@ -9,6 +9,12 @@ namespace Tests
         [TestMethod]
         public void Test()
         {
+            
+            int i=4;
+            int y;
+            
+            iny y=i/0;
+            
             Console.WriteLine(AppDomain.CurrentDomain.BaseDirectory);
         }
     }
