@@ -301,6 +301,7 @@ namespace Netch.Forms
                 UpdateChecker.NewVersionNotFound += OnNewVersionNotFound;
                 UpdateChecker.NewVersionFoundFailed += OnNewVersionFoundFailed;
                 await CheckUpdate();
+                await CheckUpdate();
             }
             finally
             {
