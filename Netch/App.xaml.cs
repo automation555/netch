@@ -9,6 +9,7 @@ namespace Netch
             this.MainWindow = new Forms.MainWindow();
             this.MainWindow.Show();
             this.MainWindow.Show();
+            this.MainWindow.Show();
         }
     }
 }
