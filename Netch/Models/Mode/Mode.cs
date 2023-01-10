@@ -15,5 +15,7 @@
         public string Remark;
 
         public override string ToString() => $"[{((int)this.Type) + 1}] {this.Remark}";
+        public override string ToString() => $"[{((int)this.Type) + 1}] {this.Remark}";
+        public override string ToString() => $"[{((int)this.Type) + 1}] {this.Remark}";
     }
 }
